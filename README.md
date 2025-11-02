@@ -127,6 +127,33 @@ docker-compose up web
 docker-compose run --rm tests
 ```
 
+TLS en desarrollo
+-----------------
+
+1. Genera un certificado auto-firmado (válido por 1 año):
+
+   ```bash
+   openssl req -x509 -newkey rsa:4096 \
+       -keyout key.pem -out cert.pem \
+       -days 365 -nodes \
+       -subj "/CN=localhost"
+   ```
+
+   > Alternativa: `mkcert localhost` si ya usas mkcert.
+
+2. Arranca el servidor activando TLS:
+
+   ```bash
+   export USE_SSL=true
+   export SSL_CERT_PATH=./cert.pem
+   export SSL_KEY_PATH=./key.pem
+   python client/main.py
+   ```
+
+3. Abre `https://127.0.0.1:5000/` y acepta el certificado auto-firmado en tu navegador.
+
+En despliegues públicos, coloca la aplicación detrás de un reverse proxy (Nginx, Caddy, etc.) con certificados gestionados por Let’s Encrypt u otra AC y desactiva `USE_SSL` en el servicio Flask interno.
+
 Testing de Seguridad
 
 El proyecto incluye un MITM Proxy para verificar que:

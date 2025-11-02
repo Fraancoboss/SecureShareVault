@@ -12,6 +12,10 @@ if str(PROJECT_ROOT) not in sys.path:
 @pytest.fixture
 def flask_env(tmp_path, monkeypatch):
     """Prepara entorno aislado para pruebas del servidor Flask."""
+    monkeypatch.setenv("USE_SSL", "false")
+    monkeypatch.delenv("SSL_CERT_PATH", raising=False)
+    monkeypatch.delenv("SSL_KEY_PATH", raising=False)
+
     shares_dir = tmp_path / "shares"
     message_store_dir = tmp_path / "message_store"
     shares_dir.mkdir()
@@ -26,5 +30,6 @@ def flask_env(tmp_path, monkeypatch):
     flask_main.SECURE_SHARE_STORAGE_DIR = shares_dir
     flask_main.storage_dir = message_store_dir
     flask_main.store_path = message_store_dir / "messages.jsonl"
+    flask_main.USE_SSL = False
 
     return flask_main

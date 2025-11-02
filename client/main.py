@@ -31,6 +31,10 @@ storage_dir = Path(project_root) / "server" / "message_store"
 storage_dir.mkdir(parents=True, exist_ok=True)
 store_path = storage_dir / "messages.jsonl"
 
+USE_SSL = os.getenv("USE_SSL", "false").lower() in {"1", "true", "yes"}
+SSL_CERT_PATH = Path(os.getenv("SSL_CERT_PATH", str(Path(project_root) / "cert.pem"))).expanduser()
+SSL_KEY_PATH = Path(os.getenv("SSL_KEY_PATH", str(Path(project_root) / "key.pem"))).expanduser()
+
 
 def persist_envelope(data, share_refs):
     message_id = uuid.uuid4().hex
@@ -138,5 +142,16 @@ def ui_send():
 
 
 if __name__ == "__main__":
-    print(f"Servidor en http://{SERVER_HOST}:{SERVER_PORT}")
-    app.run(host=SERVER_HOST, port=SERVER_PORT)
+    ssl_context = None
+    protocol = "http"
+
+    if USE_SSL:
+        if not SSL_CERT_PATH.exists() or not SSL_KEY_PATH.exists():
+            raise FileNotFoundError(
+                f"No se encontraron los certificados TLS en {SSL_CERT_PATH} y {SSL_KEY_PATH}."
+            )
+        ssl_context = (str(SSL_CERT_PATH), str(SSL_KEY_PATH))
+        protocol = "https"
+
+    print(f"Servidor en {protocol}://{SERVER_HOST}:{SERVER_PORT}")
+    app.run(host=SERVER_HOST, port=SERVER_PORT, ssl_context=ssl_context)
