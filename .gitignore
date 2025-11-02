@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.swp
+*.swo
+.DS_Store
+env/
+venv/
+.venv/
+.idea/
+.vscode/
+
+# Runtime artifacts
+client_secure_shares/
+server/message_store/
