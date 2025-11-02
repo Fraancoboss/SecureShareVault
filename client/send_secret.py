@@ -3,6 +3,7 @@ import sys
 import json
 import base64
 from pathlib import Path
+from urllib.parse import urljoin
 
 import requests
 from Crypto.Random import get_random_bytes
@@ -17,6 +18,24 @@ from client.config import (
     SECURE_SHARE_STORAGE_DIR,
 )
 from client.share_vault import SecureShareVault
+
+AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "changeme")
+
+api_base = SERVER_URL.rsplit("/", 1)[0] + "/"
+login_url = urljoin(api_base, "auth/login")
+
+login_response = requests.post(
+    login_url,
+    json={"username": AUTH_USERNAME, "password": AUTH_PASSWORD},
+    timeout=10,
+)
+
+if login_response.status_code != 200:
+    raise SystemExit(f"❌ Error autenticando usuario: {login_response.text}")
+
+token = login_response.json()["access_token"]
+headers = {"Authorization": f"Bearer {token}"}
 
 # Flujo principal
 secret_text = input("Introduce tu texto secreto: ")
@@ -57,7 +76,7 @@ payload = {
     ],
 }
 
-response = requests.post(SERVER_URL, json=payload)
+response = requests.post(SERVER_URL, json=payload, headers=headers, timeout=15)
 
 if response.status_code == 200:
     reply = response.json()

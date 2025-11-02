@@ -73,6 +73,21 @@ SERVER_URL = "http://127.0.0.1:5000/api/relay"  # Endpoint del servidor
 SHARE_CUSTODIANS = ["custodio_alpha", "custodio_bravo", "custodio_charlie"]
 SECURE_SHARE_STORAGE_DIR = Path(__file__).resolve().parents[1] / "client_secure_shares"
 
+Autenticación (variables de entorno):
+```python
+AUTH_USERNAME = "admin"          # Usuario por defecto (cámbialo en producción)
+AUTH_PASSWORD = "changeme"       # Contraseña por defecto
+JWT_SECRET_KEY = "cambia-esta-clave"
+JWT_EXPIRES_MINUTES = 15         # Caducidad del token de acceso
+```
+
+Seguridad API (CORS y rate limiting):
+```python
+FRONTEND_ORIGIN = "http://127.0.0.1:5000"  # Origen autorizado para llamadas a /api/*
+LIMITER_ENABLED = "true"                   # Desactiva con "false" si lo necesitas
+LIMITER_DEFAULT_RATE = "60 per minute"     # Límite global (formato Flask-Limiter)
+```
+
 Instalación y Uso
 1. Instalar dependencias:
 bash
@@ -87,13 +102,17 @@ python client/main.py
 3. Abrir la interfaz web (opcional):
 
    - Navega a http://127.0.0.1:5000/
-   - Escribe un mensaje; el servidor lo procesa y devuelve **“Copia desde servidor: …”**
-   - La vista muestra el ciphertext enviado, el mensaje cifrado de respuesta y las referencias de custodios generadas.
+   - Autentícate con las credenciales configuradas (por defecto `admin` / `changeme`) para obtener un token JWT.
+   - Envía un mensaje; el servidor lo procesa y devuelve **“Copia desde servidor: …”**, mostrando también qué usuario autenticado lo ejecutó.
+   - La vista presenta el ciphertext enviado, la respuesta cifrada y las tarjetas con los custodios que guardan los shares.
 
 4. Enviar mensaje por CLI (opcional, segunda terminal):
 bash
 
 python client/send_secret.py
+
+   - El script solicitará usuario/contraseña desde las variables de entorno `AUTH_USERNAME` y `AUTH_PASSWORD` (usa los mismos valores que el servidor por defecto).
+   - Obtiene un token JWT automáticamente antes de enviar los datos cifrados al endpoint `/api/relay`.
 
 5. Probar seguridad con MITM:
 bash
@@ -153,6 +172,37 @@ TLS en desarrollo
 3. Abre `https://127.0.0.1:5000/` y acepta el certificado auto-firmado en tu navegador.
 
 En despliegues públicos, coloca la aplicación detrás de un reverse proxy (Nginx, Caddy, etc.) con certificados gestionados por Let’s Encrypt u otra AC y desactiva `USE_SSL` en el servicio Flask interno.
+
+Autenticación y rate limiting
+-----------------------------
+
+- Obtener token vía API:
+
+  ```bash
+  curl -s -X POST http://127.0.0.1:5000/api/auth/login \
+    -H "Content-Type: application/json" \
+    -d '{"username":"admin","password":"changeme"}'
+  ```
+
+  La respuesta incluye `access_token` y el tiempo de expiración en minutos. Usa el token en los encabezados:
+
+  ```bash
+  curl -X POST http://127.0.0.1:5000/api/relay \
+    -H "Authorization: Bearer <token>" \
+    -H "Content-Type: application/json" \
+    -d '{"data": {...}, "share_references": [...]}'
+  ```
+
+- CORS: solo el origen configurado en `FRONTEND_ORIGIN` puede acceder a `/api/*`.
+- Rate limiting (por defecto):
+  * Global: `LIMITER_DEFAULT_RATE = "60 per minute"`
+  * `/api/auth/login`: `10` peticiones por minuto
+  * `/api/relay`: `30` peticiones por minuto
+  * `/api/ui/send`: `15` peticiones por minuto
+  Ajusta los límites mediante variables de entorno (`LIMITER_ENABLED`, `LIMITER_DEFAULT_RATE`).
+- Protección adicional en login:
+  * `REQUIRE_CAPTCHA=true` exige un encabezado con nombre `CAPTCHA_HEADER` (por defecto `X-Captcha-Token`) antes de emitir tokens.
+  * Usa esta opción cuando detectes abuso: tu servicio externo de CAPTCHA puede generar ese token y colocarlo en el encabezado.
 
 Testing de Seguridad
 

@@ -110,6 +110,16 @@
       color: #f87171;
       margin-top: 8px;
     }
+    .status {
+      font-size: 0.9rem;
+      margin-top: 8px;
+    }
+    .status.success {
+      color: #34d399;
+    }
+    .status.error {
+      color: #f87171;
+    }
   </style>
 </head>
 <body>
@@ -126,6 +136,20 @@
         Para recuperar el contenido necesitarás reunir un número de shares igual al
         umbral configurado (THRESHOLD).
       </p>
+    </section>
+
+    <section class="card">
+      <h2>Autenticación</h2>
+      <form id="loginForm">
+        <label for="username">Usuario</label>
+        <input id="username" name="username" type="text" placeholder="admin" required>
+
+        <label for="password">Contraseña</label>
+        <input id="password" name="password" type="password" placeholder="******" required>
+
+        <button type="submit">Obtener token</button>
+        <span class="status" id="loginStatus"></span>
+      </form>
     </section>
 
     <section class="card">
@@ -146,6 +170,9 @@
       <h3>Identificador de mensaje</h3>
       <pre id="messageId"></pre>
 
+      <h3>Procesado por</h3>
+      <pre id="processedBy"></pre>
+
       <h3>Custodios con shares</h3>
       <div class="cards-grid" id="custodianCards"></div>
 
@@ -158,20 +185,73 @@
   </main>
 
   <script>
+    const loginForm = document.getElementById('loginForm');
+    const loginStatus = document.getElementById('loginStatus');
     const form = document.getElementById('messageForm');
     const messageInput = document.getElementById('message');
     const errorMessage = document.getElementById('errorMessage');
     const results = document.getElementById('results');
     const modifiedMessage = document.getElementById('modifiedMessage');
     const messageIdEl = document.getElementById('messageId');
+    const processedBy = document.getElementById('processedBy');
     const custodianCards = document.getElementById('custodianCards');
     const cipherPayload = document.getElementById('cipherPayload');
     const replyPayload = document.getElementById('replyPayload');
+    let accessToken = null;
+
+    loginForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      loginStatus.textContent = '';
+      loginStatus.className = 'status';
+
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      if (!username || !password) {
+        loginStatus.textContent = 'Usuario y contraseña son obligatorios.';
+        loginStatus.classList.add('error');
+        return;
+      }
+
+      const submitButton = loginForm.querySelector('button[type="submit"]');
+      submitButton.disabled = true;
+      submitButton.textContent = 'Solicitando token...';
+
+      try {
+        const response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ username, password })
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || 'Error autenticando usuario.');
+        }
+
+        accessToken = payload.access_token;
+        loginStatus.textContent = `Token activo (${payload.expires_in_minutes} min)`;
+        loginStatus.classList.add('success');
+      } catch (error) {
+        console.error(error);
+        loginStatus.textContent = error.message;
+        loginStatus.classList.add('error');
+        accessToken = null;
+      } finally {
+        submitButton.disabled = false;
+        submitButton.textContent = 'Obtener token';
+      }
+    });
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       errorMessage.textContent = '';
       results.hidden = true;
+
+       if (!accessToken) {
+        errorMessage.textContent = 'Primero debes autenticarte para obtener un token.';
+        return;
+      }
 
       const message = messageInput.value.trim();
       if (!message) {
@@ -186,7 +266,10 @@
       try {
         const response = await fetch('/api/ui/send', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${accessToken}`,
+          },
           body: JSON.stringify({ message })
         });
 
@@ -197,6 +280,7 @@
 
         modifiedMessage.textContent = payload.modified_message;
         messageIdEl.textContent = payload.message_id;
+        processedBy.textContent = payload.processed_by || '-';
 
         custodianCards.innerHTML = '';
         (payload.share_references || []).forEach((ref) => {

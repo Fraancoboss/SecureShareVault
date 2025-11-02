@@ -4,10 +4,19 @@ import json
 import os
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from Crypto.Random import get_random_bytes
+from flask_cors import CORS
+from flask_jwt_extended import (
+    JWTManager,
+    create_access_token,
+    get_jwt_identity,
+    jwt_required,
+)
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 # Obtener el directorio raíz del proyecto
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -27,6 +36,46 @@ from client.share_vault import SecureShareVault
 
 app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"))
 
+app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "change-this-in-prod")
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(
+    minutes=int(os.getenv("JWT_EXPIRES_MINUTES", "15"))
+)
+jwt = JWTManager(app)
+
+frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://127.0.0.1:5000")
+CORS(
+    app,
+    resources={"/api/*": {"origins": frontend_origin}},
+    supports_credentials=False,
+    expose_headers=["Content-Type"],
+    allow_headers=["Content-Type", "Authorization"],
+)
+
+limiter_enabled = os.getenv("LIMITER_ENABLED", "true").lower() in {"1", "true", "yes"}
+limiter_rate = os.getenv("LIMITER_DEFAULT_RATE", "60 per minute")
+if limiter_enabled:
+    limiter = Limiter(
+        get_remote_address,
+        app=app,
+        default_limits=[limiter_rate],
+        storage_uri="memory://",
+    )
+else:
+    limiter = Limiter(get_remote_address, app=app, enabled=False)
+
+
+def rate_limit_per_user():
+    payload = request.get_json(silent=True) or {}
+    username = (payload.get("username") or "").strip().lower()
+    if username:
+        return f"user:{username}"
+    return f"ip:{get_remote_address()}"
+
+
+@app.errorhandler(429)
+def handle_rate_limit(exc):
+    return jsonify({"error": "Límite de solicitudes excedido. Intenta nuevamente más tarde."}), 429
+
 storage_dir = Path(project_root) / "server" / "message_store"
 storage_dir.mkdir(parents=True, exist_ok=True)
 store_path = storage_dir / "messages.jsonl"
@@ -34,6 +83,11 @@ store_path = storage_dir / "messages.jsonl"
 USE_SSL = os.getenv("USE_SSL", "false").lower() in {"1", "true", "yes"}
 SSL_CERT_PATH = Path(os.getenv("SSL_CERT_PATH", str(Path(project_root) / "cert.pem"))).expanduser()
 SSL_KEY_PATH = Path(os.getenv("SSL_KEY_PATH", str(Path(project_root) / "key.pem"))).expanduser()
+
+AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "changeme")
+CAPTCHA_REQUIRED = os.getenv("REQUIRE_CAPTCHA", "false").lower() in {"1", "true", "yes"}
+CAPTCHA_HEADER = os.getenv("CAPTCHA_HEADER", "X-Captcha-Token")
 
 
 def persist_envelope(data, share_refs):
@@ -60,7 +114,31 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/api/auth/login", methods=["POST"])
+@limiter.limit("10 per minute")
+@limiter.limit("5 per minute", key_func=rate_limit_per_user)
+def login():
+    payload = request.json or {}
+    username = (payload.get("username") or "").strip()
+    password = payload.get("password") or ""
+
+    if CAPTCHA_REQUIRED and not request.headers.get(CAPTCHA_HEADER):
+        return jsonify({"error": "Validación adicional requerida."}), 403
+
+    if not username or not password:
+        return jsonify({"error": "Credenciales inválidas."}), 401
+
+    if username != AUTH_USERNAME or password != AUTH_PASSWORD:
+        return jsonify({"error": "Credenciales inválidas."}), 401
+
+    token = create_access_token(identity=username)
+    expires_minutes = int(app.config["JWT_ACCESS_TOKEN_EXPIRES"].total_seconds() // 60)
+    return jsonify({"access_token": token, "expires_in_minutes": expires_minutes})
+
+
 @app.route("/api/relay", methods=["POST"])
+@jwt_required()
+@limiter.limit("30 per minute")
 def relay():
     content = request.json or {}
     data = content.get("data", {})
@@ -88,10 +166,13 @@ def relay():
         "message_id": message_id,
         "custodians_required": THRESHOLD,
         "note": "El servidor no conserva shares suficientes para reconstruir la clave.",
+        "processed_by": get_jwt_identity(),
     })
 
 
 @app.route("/api/ui/send", methods=["POST"])
+@jwt_required()
+@limiter.limit("15 per minute")
 def ui_send():
     payload = request.json or {}
     message = (payload.get("message") or "").strip()
@@ -127,6 +208,7 @@ def ui_send():
     return jsonify({
         "message_id": message_id,
         "modified_message": reply_text,
+        "processed_by": get_jwt_identity(),
         "ciphertext": data["ciphertext"],
         "nonce": data["nonce"],
         "tag": data["tag"],
